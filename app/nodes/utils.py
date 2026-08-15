@@ -44,8 +44,14 @@ def safe_node(node_name: str) -> Callable:
 
 
 def log_edge(source_node: str, edge_label: str, target_node: str) -> None:
-    """Log a single graph transition as `source -> edge -> target`."""
-    logger.info("EDGE: %s -> (%s) -> %s", source_node, edge_label, target_node)
+    """Log a single graph transition as `source -> edge -> target`.
+
+    Debug-level: the CLI console already shows the same position/decision
+    visually via `app/graph/progress.py` (GraphProgressLogger); this stays
+    available for debug logs and LangSmith tracing without duplicating the
+    on-screen step lines.
+    """
+    logger.debug("EDGE: %s -> (%s) -> %s", source_node, edge_label, target_node)
 
 
 def route_on_error(next_node: str, source_node: str = "<unknown>") -> Callable[[PipelineState], str]:

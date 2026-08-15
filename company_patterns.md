@@ -1,54 +1,68 @@
-# Company Test Case & Ticket Patterns
+# Company Standard: Feature Ticket Creation
 
-This document is the single source of truth for how feature tickets and
-test cases should be structured at our company. It is loaded by two parts
-of the pipeline:
+Every feature delivered to engineering must start from a well-formed ticket. This document defines the
+minimum standard for ticket creation across all product teams. Any deviation requires QA lead approval.
 
-- `app/nodes/pattern_scoring.py` - scores a preprocessed Aha! ticket
-  against these patterns (completeness + structure), producing
-  `pattern_conformance` (`divergent` / `partial` / `conformant`).
-- `app/knowledge_base.py` - seeds the RAG knowledge base used by
-  `rag_retrieval`/`llm_generation` to ground generated test cases in these
-  same standards.
+## Required Fields
 
-Keeping both in sync with one file avoids the scoring step and the
-generation step disagreeing about what "good" looks like.
+Every ticket must be filled in completely before it is ready for grooming:
 
-## Ticket Completeness Standards
-
-- A ticket must have a non-empty **description** explaining the feature's
-  purpose and user-facing behavior.
-- A ticket must have at least **two concrete, testable acceptance
-  criteria** written in a Given/When/Then or equivalent explicit format
-  (not vague statements like "should work correctly").
-- Acceptance criteria should cover both the primary/happy-path behavior
-  and at least one boundary, error, or edge condition where applicable.
-- Ambiguous or placeholder tickets (e.g. "improve performance", "fix
-  bugs") without measurable acceptance criteria are considered
-  **divergent** from company patterns, regardless of description length.
-
-## Test Case Structure Standards
-
-- Every test case must include **preconditions**, **numbered steps**, and
-  exactly **one explicit expected result** per test case (or per step for
-  multi-assertion cases).
-- Test case titles follow the pattern
-  `<Feature> - <Scenario> - <Expected outcome>` for TestRail consistency.
-- Priority (`High`/`Medium`/`Low`) is assigned based on **user impact and
-  frequency of use**, not implementation complexity.
-
-## Coverage Standards
-
-- For every feature, test cases must cover at least:
-  - One **happy path** scenario.
-  - One **negative** scenario (invalid input).
-  - One **edge case** (boundary values, empty state, or concurrency),
-    where applicable to the feature.
-
-## How Scoring Maps to These Patterns
-
-| Score | Meaning |
+| Field | Requirement |
 |---|---|
-| `conformant` | Ticket has a clear description and multiple concrete, testable acceptance criteria that already give enough detail to derive happy-path, negative, and edge-case test cases without extra grounding. |
-| `partial` | Ticket has a description and at least one acceptance criterion, but lacks enough detail/coverage to confidently derive all required test case categories (negative/edge cases) without additional context. |
-| `divergent` | Ticket is missing a real description and/or has no acceptance criteria at all - not enough signal to reliably generate test cases. |
+| Title | Outcome-focused, specific, unique |
+| Description | Purpose + user-facing behavior |
+| Acceptance Criteria | ≥ 2 concrete, testable criteria |
+| Priority | High / Medium / Low, per the Priority table |
+| Attachments / Links | Mockups, docs, or reproduction context where available |
+
+## Title
+
+Titles follow the pattern `<Component>: <outcome>` (e.g. `Billing: Allow invoice download as PDF`). Titles are:
+
+- **Outcome-focused** — state what the user can do, not the technical mechanism.
+- **Specific** — no vague wording such as "improve performance" or "fix bugs".
+- **Unique** — never duplicate an existing or previously shipped ticket.
+
+## Description
+
+A ticket's description must answer:
+
+- **What** the feature does and who it is for.
+- **Why** it exists — the user problem it solves.
+- **How** a user would interact with it (happy path).
+- **Edge / error behavior** — what happens on invalid input or boundary conditions, where applicable.
+
+## Acceptance Criteria
+
+Acceptance criteria define *done* and are the contract for QA. They must:
+
+- Be written in **Given / When / Then** or equivalent explicit format.
+- Be **testable** — verifiable without subjective judgement.
+- Cover the **happy path** and at least one **boundary, error, or edge condition**.
+- Avoid vague statements such as "should work correctly" or "be fast".
+
+| ❌ Weak | ✅ Strong |
+|---|---|
+| The feature should work correctly. | Given a valid invoice, When the user clicks Download as PDF, Then a PDF is saved locally. |
+| Improve performance. | Given 10,000 records, When the list loads, Then it renders in under 2 seconds. |
+
+## Priority
+
+Priority is assigned by **user impact** and **frequency of use**, not implementation complexity:
+
+| Priority | Definition |
+|---|---|
+| High | Blocks users or a core workflow; affects most users frequently |
+| Medium | Important but has a workaround; moderate frequency |
+| Low | Nice-to-have; rarely used or cosmetic |
+
+## Definition of Done
+
+A ticket is ready for work only when:
+
+- [ ] Title follows the naming pattern and is specific.
+- [ ] Description states what, why, and how.
+- [ ] At least two concrete, testable acceptance criteria in explicit format.
+- [ ] Criteria cover the happy path and error/boundary behavior.
+- [ ] Priority is set per the Priority table.
+- [ ] Any relevant attachments / links are included.

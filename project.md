@@ -1,15 +1,16 @@
-# ICAIE Capstone Project Deliverable
+# Capstone Project Deliverable
 
 ## Project
 
-### Title
 **AI-Powered Test Case Generation from Aha! Features Using RAG**
 
 ### Problem Statement
 
-Quality Assurance engineers spend a significant amount of time manually creating test cases from feature requests stored in Aha!. The process is repetitive, inconsistent, and highly dependent on individual experience, often leading to missing edge cases and delayed feature validation.
+QA engineers spend significant time manually creating test cases from Aha! feature requests. The process is repetitive, inconsistent, and dependent on individual experience — leading to missed edge cases and delayed feature validation.
 
-The proposed solution is an AI-powered assistant that automatically analyzes feature requirements, retrieves relevant organizational knowledge using Retrieval-Augmented Generation (RAG), and generates high-quality TestRail test cases for human review.
+### Solution
+
+An AI-powered assistant that analyzes feature requirements, retrieves relevant organizational knowledge via Retrieval-Augmented Generation (RAG), and generates high-quality TestRail test cases for human review.
 
 ### Objectives
 
@@ -21,64 +22,42 @@ The proposed solution is an AI-powered assistant that automatically analyzes fea
 ### Success Metrics
 
 | Metric | Target |
-|---------|--------|
-| Test case creation effort | -30% |
+|---|---|
+| Test case creation effort | −30% |
 | Test coverage | Increased edge-case coverage |
 | Review effort | Reduced rework |
 | User adoption | Positive feedback from QA teams |
 
----
+## Architecture
 
-# High-Level Architecture
+```mermaid
+flowchart TD
+    A[Aha!] --> B[Feature Extraction]
+    B --> C[Document Preprocessing<br/>Markdown + Attachments]
+    C --> D[RAG Retrieval]
+    D --> E[LLM]
+    E --> F[Generated Test Cases]
+    F --> G[Human QA Review]
+    G --> H[TestRail]
 
-```text
-                    +------------------+
-                    |      Aha!        |
-                    +------------------+
-                              |
-                              v
-                 Feature Extraction Service
-                              |
-                              v
-                    Document Preprocessing
-                 (Markdown + Attachments)
-                              |
-                              v
-                     Knowledge Retrieval
-        +-----------------------------------------+
-        |               RAG Service               |
-        |-----------------------------------------|
-        | Company Standards                       |
-        | Previous Test Cases                     |
-        | Testing Guidelines                      |
-        | Product Documentation                   |
-        +-----------------------------------------+
-                              |
-                              v
-                            LLM
-                              |
-                              v
-                AI Generated Test Cases
-                              |
-                              v
-                     Human QA Review
-                              |
-                              v
-                         TestRail
+    subgraph RAG["RAG Service"]
+        D --> S1[Company Standards]
+        D --> S2[Previous Test Cases]
+        D --> S3[Testing Guidelines]
+        D --> S4[Product Documentation]
+    end
 ```
 
-## High-Level Design
+## Components
 
-### Components
-
-- **Aha! Extractor** – Retrieves feature descriptions, acceptance criteria, comments, and attachments.
-- **Preprocessing** – Converts documents into structured Markdown and extracts metadata.
-- **RAG Service** – Retrieves relevant organizational knowledge from a vector database.
-- **LLM** – Generates structured test cases using retrieved context.
+- **Aha! Extractor** – retrieves feature descriptions, acceptance criteria, comments, and attachments.
+- **Preprocessing** – converts documents into structured Markdown and extracts metadata.
+- **RAG Service** – retrieves relevant organizational knowledge from a vector database.
+- **LLM** – generates structured test cases from retrieved context.
 - **Human Review** – QA engineers validate and adjust generated results.
-- **TestRail Integration** – Publishes approved test cases.
+- **TestRail Integration** – publishes approved test cases.
 
-### Data Flow
+## Data Flow
 
 1. Feature is created in Aha!.
 2. AI extracts and preprocesses the content.
@@ -87,10 +66,10 @@ The proposed solution is an AI-powered assistant that automatically analyzes fea
 5. QA reviews the output.
 6. Approved test cases are published to TestRail.
 
-### Risks & Mitigations
+## Risks & Mitigations
 
 | Risk | Mitigation |
-|------|------------|
+|---|---|
 | Hallucinated test cases | Human review + RAG grounding |
 | Outdated documentation | Regular knowledge ingestion |
 | Missing context | Metadata filtering and retrieval optimization |
@@ -98,13 +77,9 @@ The proposed solution is an AI-powered assistant that automatically analyzes fea
 
 ---
 
-# Article Outline
-
-## Title
+## Article Outline
 
 **Applying RAG to Accelerate Software Test Design**
-
-## Outline
 
 1. Introduction
 2. The Challenge of Manual Test Design

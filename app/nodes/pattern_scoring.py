@@ -51,38 +51,9 @@ and test case patterns below.
 Feature ticket (Markdown):
 {feature_markdown}
 
-Using the "How Scoring Maps to These Patterns" section above as your rubric, score the ticket as one of: \
+Using the company patterns above as your rubric, score the ticket as one of: \
 "divergent", "partial", or "conformant".
 """
-
-
-def _heuristic_score(state: PipelineState) -> PatternScoreResult:
-    """Deterministic fallback scorer used when no LLM is configured.
-
-    Mirrors the "How Scoring Maps to These Patterns" rubric in
-    `company_patterns.md` (loaded via `load_company_patterns()` for the
-    LLM scorer) using the lightweight completeness signals already
-    computed by `preprocessing` (`feature_metadata`), since a full text
-    read isn't needed to check description/acceptance-criteria presence.
-    """
-    metadata = state.get("feature_metadata", {})
-    has_description = metadata.get("has_description", False)
-    criteria_count = metadata.get("acceptance_criteria_count", 0)
-
-    if not has_description or criteria_count == 0:
-        return PatternScoreResult(
-            conformance="divergent",
-            rationale="Heuristic scorer: missing description and/or acceptance criteria.",
-        )
-    if criteria_count < 2:
-        return PatternScoreResult(
-            conformance="partial",
-            rationale=f"Heuristic scorer: only {criteria_count} acceptance criterion found.",
-        )
-    return PatternScoreResult(
-        conformance="conformant",
-        rationale=f"Heuristic scorer: description present with {criteria_count} acceptance criteria.",
-    )
 
 
 def _llm_score(state: PipelineState) -> PatternScoreResult:
@@ -90,21 +61,12 @@ def _llm_score(state: PipelineState) -> PatternScoreResult:
 
     llm = ChatOpenAI(
         model="gpt-4o-mini", temperature=0, http_client=build_http_client()
-    ).with_structured_output(PatternScoreResult, include_raw=True)
+    ).with_structured_output(PatternScoreResult)
     prompt = _SCORING_PROMPT.format(
         company_patterns=load_company_patterns(),
         feature_markdown=state.get("feature_markdown") or "(empty)",
     )
-    response = llm.invoke(prompt)
-    # `include_raw=True` returns {"raw": AIMessage, "parsed": PatternScoreResult, "parsing_error": ...}
-    # so we can log the model's raw/unparsed response alongside the parsed result.
-    raw_message = response["raw"]
-    logger.info(
-        "pattern_scoring: raw LLM response for feature '%s':\n%s",
-        state.get("aha_feature_id"),
-        raw_message.pretty_repr() if hasattr(raw_message, "pretty_repr") else raw_message,
-    )
-    return response["parsed"]
+    return llm.invoke(prompt)
 
 
 @safe_node("pattern_scoring")
@@ -119,12 +81,13 @@ def pattern_scoring(state: PipelineState) -> dict:
         Partial state update with `pattern_conformance` and
         `pattern_score_rationale`.
     """
-    if llm_configured():
-        logger.info("pattern_scoring: using LLM scorer (gpt-4o-mini)")
-        result = _llm_score(state)
-    else:
-        logger.info("pattern_scoring: using heuristic scorer (no OPENAI_API_KEY configured)")
-        result = _heuristic_score(state)
+    if not llm_configured():
+        raise RuntimeError(
+            "pattern_scoring requires an LLM: set OPENAI_API_KEY "
+            "(the heuristic fallback scorer has been removed)."
+        )
+    logger.info("pattern_scoring: using LLM scorer (gpt-4o-mini)")
+    result = _llm_score(state)
 
     # Always log the score before the pipeline moves on to RAG/generation,
     # so it's visible in output/logs regardless of what happens next.

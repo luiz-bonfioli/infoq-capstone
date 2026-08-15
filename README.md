@@ -1,85 +1,84 @@
 # AI-Powered Test Case Generation from Aha! Features Using RAG
 
-A [LangGraph](https://langchain-ai.github.io/langgraph/) pipeline that extracts features from Aha!,
-retrieves relevant organizational knowledge (RAG), generates TestRail test cases with an LLM, routes them
-through human QA review, and publishes approved cases to TestRail.
+A [LangGraph](https://langchain-ai.github.io/langgraph/) pipeline that extracts Aha! features, retrieves relevant organizational knowledge (RAG), generates TestRail test cases with an LLM, routes them through human QA review, and publishes approved cases to TestRail.
 
 See [`project.md`](./project.md) for the full problem statement and architecture.
+See [`NODES_AND_STATE.md`](./NODES_AND_STATE.md) for every node and the `PipelineState` fields.
 
-## Project Structure
+## Graph
+
+```mermaid
+flowchart TD
+    START([START]) --> aha_extractor
+    aha_extractor --> preprocessing --> pattern_scoring
+    pattern_scoring -- conformant --> llm_generation
+    pattern_scoring -- partial / divergent --> confirm_low_score
+    confirm_low_score -- abort --> error_handler
+    confirm_low_score -- continue, divergent --> rag_retrieval --> llm_generation
+    confirm_low_score -- continue, partial --> llm_generation
+    llm_generation --> human_review
+    human_review -- approved --> testrail_publish --> END([END])
+    human_review -- rejected, retries left --> llm_generation
+    human_review -- rejected, exhausted --> error_handler
+    error_handler --> END
+```
+
+## Tools
+
+| Tool | Description | Status |
+|---|---|---|
+| [`get_aha_feature`](./app/tools/aha_tools.py) | Fetch Aha! feature (description, acceptance criteria, comments, attachments) | Mock data |
+| [`publish_test_cases_to_testrail`](./app/tools/testrail_tools.py) | Publish approved test cases as a TestRail run | Mock data |
+
+## Structure
 
 ```
 app/
-  state.py                # Shared PipelineState / TestCase types
-  main.py                 # CLI entrypoint (handles interrupt/resume loop)
-  console.py              # rich-based console rendering/prompting (panels, tables, spinners)
-  llm_config.py           # llm_configured() - detects OPENAI_API_KEY for real vs. stub behavior
-  company_patterns.py     # Loads company_patterns.md (single source of truth for scoring + RAG)
-  knowledge_base.py        # Seed company standards/guidelines documents for RAG
-  tools/                   # @tool get_aha_feature / publish_test_cases_to_testrail (serve mock data)
-  mocks/                    # Pre-configured mock Aha! features + TestRail responses
-  graph/build_graph.py     # LangGraph StateGraph wiring + MemorySaver checkpointer
-  nodes/
-    aha_extractor.py       # Calls get_aha_feature tool
-    preprocessing.py       # Convert to Markdown + metadata
-    pattern_scoring.py     # Score ticket vs. company_patterns.md (LLM or heuristic) + routing
-    confirm_low_score.py   # Human-in-the-loop gate: confirm whether to proceed on a low score
-    rag_retrieval.py       # InMemoryVectorStore + OpenAIEmbeddings retrieval (optional, see below)
-    llm_generation.py      # ChatOpenAI + structured output test case generation
-    human_review.py        # Human-in-the-loop review via interrupt() + routing
-    error_handler.py       # Terminal node for unrecoverable errors / exhausted retries
-    utils.py               # safe_node error-catching decorator + route_on_error/log_edge helpers
-company_patterns.md        # Single source of truth for ticket/test case standards
+  state.py                # PipelineState / TestCase types
+  main.py                 # CLI entrypoint (interrupt/resume loop)
+  console.py              # rich rendering/prompting
+  llm_config.py           # llm_configured() - real vs stub LLM
+  company_patterns.py     # Loads company_patterns.md (scoring + RAG source)
+  knowledge_base.py       # Seeds company standards into RAG vector store
+  tools/                  # @tool functions above (mock-backed)
+  mocks/                  # Mock Aha! features + TestRail responses
+  graph/build_graph.py    # StateGraph wiring + MemorySaver checkpointer
+  nodes/                  # One file per graph node (see diagram)
+company_patterns.md       # Source of truth for ticket-creation standards
 requirements.txt
 ```
 
-> `aha_extractor`/`testrail_publish` currently call `@tool` functions serving mock data (`app/mocks/`)
-> pending real Aha!/TestRail API clients. `pattern_scoring`, `rag_retrieval`, and `llm_generation` use real
-> `ChatOpenAI`/`OpenAIEmbeddings` when `OPENAI_API_KEY` is set, else fall back to a heuristic/empty results
-> so the graph stays runnable without credentials. Graph plumbing (state, routing, checkpointing, error
-> handling, human-in-the-loop) is fully implemented.
+## Scoring & routing
 
-## How scoring works
+[`company_patterns.md`](./company_patterns.md) defines what a well-formed feature ticket looks like. `pattern_scoring` judges each feature as `conformant` / `partial` / `divergent`:
 
-[`company_patterns.md`](./company_patterns.md) is the single source of truth for what a well-formed ticket
-and test case look like (completeness, structure, coverage). `pattern_scoring` loads it
-(`load_company_patterns()`) and injects the full text into the LLM prompt, so `divergent`/`partial`/
-`conformant` is judged directly against that rubric (`_llm_score`, used when `OPENAI_API_KEY` is set). A
-deterministic `_heuristic_score` fallback mirrors the same rubric using simple ticket-completeness counts
-when no LLM is configured. The same standards are also seeded into the RAG vector store (`knowledge_base.py`,
-manually kept in sync with the `.md` file) so generation is grounded in the same rules the ticket was scored
-against. Edit `company_patterns.md` to change what "conformant" means company-wide.
+- **LLM scorer** (the only scorer) — requires `OPENAI_API_KEY`; without it, the run stops at `pattern_scoring` with an error.
+- `conformant` → straight to `llm_generation`.
+- `partial` / `divergent` → pause at `confirm_low_score` (human continues/aborts); on continue, `divergent` also runs RAG, `partial` skips it.
 
-Routing based on the score:
-- `conformant` → skips straight to `llm_generation`.
-- `partial`/`divergent` → pauses at `confirm_low_score` (human decides continue/abort); if continuing,
-  `divergent` also runs `rag_retrieval` first, `partial` skips it.
+The same standards are seeded into the RAG vector store (`knowledge_base.py`) so generation is grounded in the same rubric. Edit `company_patterns.md` to change what "conformant" means.
 
-## LangChain + LangGraph roles
+## RAG — how it works (partially mocked, partially real)
 
-- **LangGraph** owns orchestration: state (`PipelineState`), node sequencing, conditional routing, retries,
-  checkpointing, human-in-the-loop pause/resume.
-- **LangChain** provides building blocks inside nodes: `@tool`-decorated functions (`tools/`, called
-  directly via `.invoke()`, not LLM tool-calling), `InMemoryVectorStore` + `OpenAIEmbeddings` for retrieval,
-  and `ChatOpenAI.with_structured_output(...)` for scoring/generation.
-- No agentic tool-calling (`bind_tools`/`ToolNode`) is used - this is a deterministic pipeline where
-  LangGraph's conditional edges make all routing decisions.
+RAG only runs for `divergent` tickets (`rag_retrieval` node), to ground test case generation in company standards:
 
-```python
-from app.tools import get_aha_feature
-feature_raw = get_aha_feature.invoke({"feature_id": "PROJ-123"})
-```
+1. An in-memory vector store is seeded with `COMPANY_KNOWLEDGE_SEED` (`app/knowledge_base.py`) — 5 static docs split out of `company_patterns.md` (naming, coverage, structure, prioritization, ticket completeness).
+2. The feature Markdown is embedded with **real** OpenAI embeddings (`text-embedding-3-small`) and the top-4 chunks are retrieved by similarity.
+3. `llm_generation` injects those chunks into its prompt, so `gpt-4o-mini` grounds the test cases in the same rubric the scorer used.
 
-## Mock data & test fixtures
+**What's real:** the embedding calls, the similarity search, and grounding the LLM output on retrieved context.
+**What's mocked/limited:** the knowledge corpus is a small hardcoded seed (one file, rebuilt in memory on every run) rather than a real ingested corpus with persistence — no pgvector/Pinecone/Chroma, no ingestion pipeline yet. Swap `InMemoryVectorStore` + `COMPANY_KNOWLEDGE_SEED` for a persistent store once real knowledge sources exist (see `project.md`).
+**Without `OPENAI_API_KEY`:** `rag_retrieval` logs a warning and returns empty context — generation then runs without RAG grounding.
 
-`app/mocks/aha_features.py` has 10 general mock features (`AHA-101`-`AHA-110`) plus 6 fixtures purpose-built
-to deterministically hit each pattern-conformance tier under the heuristic scorer:
+## Mock fixtures
 
-| Feature ID | Heuristic score | Exercises |
+10 generic features (`AHA-101`–`AHA-110`) plus fixtures purpose-built to hit each tier:
+
+| Feature | Score | Behavior |
 |---|---|---|
-| `AHA-201` | `divergent` | Gate triggers, RAG runs if user continues |
-| `AHA-202`/`203`/`204` | `partial` | Gate triggers, RAG skipped if user continues |
-| `AHA-205`/`206` | `conformant` | Gate skipped, straight to `llm_generation` |
+| `AHA-201` | `divergent` | Gate triggers, RAG runs on continue |
+| `AHA-202`/`203`/`204` | `partial` | Gate triggers, RAG skipped |
+| `AHA-205`/`206` | `conformant` | No gate |
 
 ```powershell
 python -m app.main --feature-id AHA-201   # divergent - answer "n" to abort
@@ -87,120 +86,70 @@ python -m app.main --feature-id AHA-202   # partial - answer "y" to continue
 python -m app.main --feature-id AHA-205   # conformant - no gate
 ```
 
-> If `OPENAI_API_KEY` is set, the real LLM scorer is used instead and may occasionally judge a fixture
-> differently than the table above (guaranteed only for the heuristic fallback).
+Any other ID falls back to `DEFAULT_AHA_FEATURE_MOCK` (empty, scores `divergent`). Swap the `get_mock_*` calls in `app/tools/` for real HTTP calls once API clients are implemented.
 
-Any other `feature_id` falls back to `DEFAULT_AHA_FEATURE_MOCK` (empty, scores `divergent`). Swap the
-`get_mock_*` calls in `app/tools/` for real HTTP calls once the real API clients are implemented.
+## LangGraph features
 
-## LangGraph features implemented
+- **`StateGraph`** + **`MemorySaver`** checkpointing (swap for SQLite/Postgres for persistence).
+- **Human-in-the-loop**: `confirm_low_score` and `human_review` via `interrupt()`, resumed with `{"continue": ...}` / `{"decision": ..., "feedback": ...}`.
+- **Retry loop**: `human_review` loops back on rejection, capped at `MAX_RETRIES` (3) — **up to 3 total generation attempts**. Each `llm_generation` run increments `retry_count` (1 → 2 → 3). Rejecting after the 3rd attempt trips `retry_count >= MAX_RETRIES` and routes to `error_handler` (`NOT PUBLISHED`). Approving any of the 3 exits the loop early → `testrail_publish`.
+- **Error handling**: `safe_node` wraps every node, routing failures to `error_handler` without crashing the graph.
+- **Edge logging**: every conditional edge logs `EDGE: source -> (label) -> target` for tracing.
 
-- **`StateGraph`** with typed `PipelineState`, plus **`MemorySaver`** checkpointing (swap for SQLite/Postgres
-  for real persistence).
-- **Human-in-the-loop**: `confirm_low_score` (resume `{"continue": true/false}`) and `human_review` (resume
-  `{"decision": "approved"/"rejected", "feedback": str}`), both `interrupt()`-based.
-- **Conditional edges / retry loop**: every node routes to `error_handler` on failure; `human_review` loops
-  back to `llm_generation` on rejection, capped at `MAX_RETRIES` (default 3).
-- **Error handling**: `safe_node` decorator wraps every node, catching exceptions into `state["error"]`
-  without crashing the graph (while letting `GraphInterrupt` propagate).
-- **Edge logging**: every conditional edge logs `EDGE: source -> (label) -> target` via `log_edge()`
-  (`app/nodes/utils.py`), visible in console/log output for tracing which branch a run took.
+## How to run
 
-## Graph shape
-
-```
-START -> aha_extractor -> preprocessing -> pattern_scoring
-    --(conformant)--------------------------------> llm_generation
-    --(partial/divergent)--> confirm_low_score
-        --(abort)-----------------------------------> error_handler -> END
-        --(continue, divergent)---------------------> rag_retrieval -> llm_generation
-        --(continue, partial)------------------------> llm_generation
-    -> human_review --(approved)--------> testrail_publish -> END
-                    --(rejected, retries left)--> llm_generation (loop)
-                    --(rejected, exhausted)--> error_handler -> END
-    (any node error) --> error_handler -> END
-```
-
-### Visualizing the graph
-
-**LangSmith tracing** - set `LANGSMITH_TRACING=true`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT` in `.env`
-(see `.env.example`), then run normally; each run appears as a trace at smith.langchain.com showing every
-node executed and where `interrupt()` paused.
-
-**LangGraph Studio** - `pip install "langgraph-cli[inmem]"` (in `requirements.txt`), then from the project
-root run `langgraph dev` (uses [`langgraph.json`](./langgraph.json)). It opens/prints a Studio URL that
-renders the graph, lets you invoke it, inspect state, and resume interrupts from a UI.
-
-### Calling the agent over HTTP (PowerShell)
-
-With `langgraph dev` running, use `curl.exe` (the real curl bundled with Windows; PowerShell's `curl` alias
-doesn't support the same flags) against `http://127.0.0.1:2024`. Assistant id is `test_case_pipeline`.
-
-```powershell
-# 1. conformant (AHA-205) - runs straight through to the human_review interrupt
-$threadId = (curl.exe -s -X POST http://127.0.0.1:2024/threads -H "Content-Type: application/json" -d '{}' | ConvertFrom-Json).thread_id
-curl.exe -s -X POST "http://127.0.0.1:2024/threads/$threadId/runs/wait" `
-  -H "Content-Type: application/json" `
-  -d '{"assistant_id": "test_case_pipeline", "input": {"aha_feature_id": "AHA-205"}}'
-
-# 2. partial (AHA-202) - pauses at confirm_low_score, then resume to continue
-$threadId = (curl.exe -s -X POST http://127.0.0.1:2024/threads -H "Content-Type: application/json" -d '{}' | ConvertFrom-Json).thread_id
-curl.exe -s -X POST "http://127.0.0.1:2024/threads/$threadId/runs/wait" -H "Content-Type: application/json" -d '{"assistant_id": "test_case_pipeline", "input": {"aha_feature_id": "AHA-202"}}'
-curl.exe -s -X POST "http://127.0.0.1:2024/threads/$threadId/runs/wait" -H "Content-Type: application/json" -d '{"assistant_id": "test_case_pipeline", "command": {"resume": {"continue": true}}}'
-
-# 3. divergent (AHA-201) - pauses at confirm_low_score, resume to abort (-> error_handler)
-$threadId = (curl.exe -s -X POST http://127.0.0.1:2024/threads -H "Content-Type: application/json" -d '{}' | ConvertFrom-Json).thread_id
-curl.exe -s -X POST "http://127.0.0.1:2024/threads/$threadId/runs/wait" -H "Content-Type: application/json" -d '{"assistant_id": "test_case_pipeline", "input": {"aha_feature_id": "AHA-201"}}'
-curl.exe -s -X POST "http://127.0.0.1:2024/threads/$threadId/runs/wait" -H "Content-Type: application/json" -d '{"assistant_id": "test_case_pipeline", "command": {"resume": {"continue": false}}}'
-```
-
-To resume a `human_review` interrupt: `"command": {"resume": {"decision": "approved"}}` (or `"rejected"`
-with `"feedback": "..."`).
-
-## Setup
-
-```powershell
-py -m venv .venv
-.\.venv\Scripts\Activate.ps1
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Configuration
+Set `OPENAI_API_KEY` in a `.env` file — required, since without it the run stops at `pattern_scoring`.
 
-```powershell
-Copy-Item .env.example .env
+```bash
+python -m app.main --feature-id AHA-205
 ```
 
-Set `OPENAI_API_KEY=sk-...` in `.env` (auto-loaded via `load_dotenv()`, gitignored). Without it,
-`rag_retrieval`/`llm_generation` log a warning and return empty results - the rest of the graph still runs.
+`--feature-id` doubles as the LangGraph `thread_id` (re-running resumes that thread). Best mock features:
 
-### Troubleshooting: SSL certificate errors on corporate networks
+| Feature | Tier | Behavior |
+|---|---|---|
+| `AHA-205` | `conformant` | No gate |
+| `AHA-202` | `partial` | Pauses, answer `y`/`n` |
+| `AHA-201` | `divergent` | Pauses, RAG runs on continue |
 
-`httpx.ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] ...` means an SSL-inspecting corporate proxy's
-certificate isn't trusted. `app/main.py` already calls `truststore.inject_into_ssl()` at startup, which
-makes Python's `ssl` module trust the OS certificate store instead of `certifi`'s bundled list - just make
-sure `truststore` is installed (`requirements.txt`). Fallback: `OPENAI_SKIP_SSL_VERIFY=true` in `.env`
-disables verification for OpenAI calls only (don't use in production).
+At the prompts: `y`/`n` for the score gate; approve/reject at review. Rejecting loops back to generation — up to 3 attempts total (`MAX_RETRIES`), after which the run ends `NOT PUBLISHED`.
 
-> A `403 Forbidden` from LangSmith is a *different* problem (bad/revoked `LANGSMITH_API_KEY`, not SSL) -
-> regenerate the key at smith.langchain.com, or set `LANGSMITH_TRACING=false` to disable tracing.
+## UIs: LangGraph Studio & LangSmith
 
-## Running the pipeline
+### LangGraph Studio — interactive graph UI
 
-```powershell
-python -m app.main --feature-id AHA-123
+The graph is registered as `test_case_pipeline` in [`langgraph.json`](./langgraph.json). To open the interactive UI (visualize nodes/edges, start runs per thread, step through interrupts):
+
+```bash
+pip install "langgraph-cli"     # if not already installed
+langgraph dev
 ```
 
-`--feature-id` doubles as the LangGraph `thread_id` (re-running the same ID resumes/replays that thread).
-Console output uses [`rich`](https://github.com/Textualize/rich) (`app/console.py`): a spinner while the
-graph runs, panels for the two `interrupt()` prompts, a table of generated test cases, and a final summary
-panel + pretty-printed state. Answer `y`/`n` at each prompt (default `n`): approving proceeds to
-`testrail_publish`; rejecting loops back to `llm_generation` (up to `MAX_RETRIES`).
+- Uses [`langgraph.json`](./langgraph.json) (assistant `test_case_pipeline`, `"env": ".env"` so your keys are loaded).
+- Open **http://127.0.0.1:2024** in your browser.
+- Pick a thread (e.g. `AHA-205`), start a run, and step through the graph. When it pauses on an interrupt, resume with `{"continue": true}` or `{"decision": "approved"}` (same payloads the CLI sends).
+- `langgraph up` starts the same UI via Docker instead of a local build — handy when you don't want a Python env; it builds from [`langgraph.json`](./langgraph.json).
 
-## Next steps
+### LangSmith — trace / observability UI
 
-- Implement the real Aha! API client (`aha_extractor.py`) and TestRail API client (`testrail_publish.py`).
-- Wire up a persistent vector database (pgvector, Pinecone, Chroma) in `rag_retrieval.py`.
-- Incorporate `review_feedback` into regeneration prompts in `llm_generation.py`.
-- Replace the CLI prompt in `human_review`/`main.py` with a real UI/Slack/email integration.
-- Swap `MemorySaver` for a persistent checkpointer (SQLite/Postgres) in `build_graph.py` for production.
+Every run (nodes, LLM calls, RAG retrieval, edges, interrupts, retries) is visualized as a **trace** at [smith.langchain.com](https://smith.langchain.com). Opt-in via env vars (already stubbed in [`.env.example`](./.env.example)):
+
+```bash
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=lsv2_...
+LANGSMITH_PROJECT=capstone-test-case-gen
+```
+
+Put these in your `.env` — loaded automatically by the app (CLI runs) and by `"env": ".env"` in `langgraph.json` (Studio runs) — then run the pipeline as usual:
+
+```bash
+python -m app.main --feature-id AHA-201
+```
+
+Each run shows up as a trace under `capstone-test-case-gen` on smith.langchain.com: inspect per-node input/output, token usage, and the interrupt/resume payloads. No code changes needed — LangChain/LangGraph auto-instrument when `LANGSMITH_TRACING=true` is set.

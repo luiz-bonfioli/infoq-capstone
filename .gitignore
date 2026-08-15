@@ -1,0 +1,34 @@
+# Python bytecode & build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.eggs/
+build/
+dist/
+*.whl
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+# NOTE: .env.example is committed intentionally (README references it).
+
+# Logs
+*.log
+
+# LangGraph
+.langgraph_api/
+.langgraph/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp

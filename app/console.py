@@ -8,14 +8,9 @@ handlers), so all output shares one `Console` instance/theme.
 
 from __future__ import annotations
 
-from typing import Callable, TypeVar
-
 from rich.console import Console
-from rich.padding import Padding
 from rich.panel import Panel
-from rich.pretty import Pretty
 from rich.prompt import Confirm, Prompt
-from rich.status import Status
 from rich.table import Table
 from rich.theme import Theme
 
@@ -29,14 +24,6 @@ _THEME = Theme(
 )
 
 console = Console(theme=_THEME)
-
-T = TypeVar("T")
-
-
-def run_with_spinner(message: str, fn: Callable[[], T]) -> T:
-    """Run `fn()` while showing a spinner with `message`, returning its result."""
-    with Status(message, console=console, spinner="dots"):
-        return fn()
 
 
 def _score_style(score: str | None) -> str:
@@ -126,7 +113,7 @@ def _testrail_results_table(results: list[dict]) -> Table:
 
 
 def print_final_state(result: dict) -> None:
-    """Render the pipeline's final state as a summary panel + full state pretty-print."""
+    """Render the pipeline's final state as a summary panel plus result tables."""
     published = result.get("published")
     error = result.get("error")
 
@@ -157,5 +144,3 @@ def print_final_state(result: dict) -> None:
     testrail_results = result.get("testrail_results") or []
     if testrail_results:
         console.print(_testrail_results_table(testrail_results))
-
-    console.print(Padding(Pretty(result, expand_all=False), (1, 0)))

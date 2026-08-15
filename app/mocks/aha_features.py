@@ -120,14 +120,11 @@ AHA_FEATURE_MOCKS: dict[str, dict] = {
         "attachments": [],
     },
     # --- Pattern-score test fixtures (AHA-2xx) -----------------------------
-    # Purpose-built to deterministically exercise all three
-    # `pattern_conformance` outcomes under the heuristic scorer
-    # (`_heuristic_score` in app/nodes/pattern_scoring.py: no
-    # description/criteria -> "divergent", <2 criteria -> "partial", >=2
-    # criteria + description -> "conformant"), so the confirm_low_score
-    # gate and decide_rag_usage branches can all be tested without an
-    # OPENAI_API_KEY. When an LLM scorer is configured, real model
-    # judgment is used instead and may occasionally differ.
+    # Purpose-built to exercise all three `pattern_conformance` outcomes
+    # (no description/criteria -> "divergent", <2 criteria -> "partial",
+    # >=2 criteria + description -> "conformant"), so the confirm_low_score
+    # gate and decide_rag_usage branches can all be tested. The LLM scorer
+    # may judge a fixture slightly differently than the expected tier.
     "AHA-201": {
         "id": "AHA-201",
         "name": "Untitled backlog item",

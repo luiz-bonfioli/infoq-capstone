@@ -38,9 +38,9 @@ from app.console import (
     print_test_case_review,
     prompt_score_confirmation,
     prompt_test_case_review,
-    run_with_spinner,
 )
 from app.graph.build_graph import build_graph
+from app.graph.progress import GraphProgressLogger
 
 # Load OPENAI_API_KEY (and any other secrets) from a local .env file, if
 # present, before anything else reads os.environ.
@@ -73,21 +73,20 @@ def main() -> None:
     args = parser.parse_args()
 
     graph = build_graph()
-    config = {"configurable": {"thread_id": args.feature_id}}
 
-    result = run_with_spinner(
-        f"Extracting and processing feature [bold]{args.feature_id}[/bold]...",
-        lambda: graph.invoke({"aha_feature_id": args.feature_id}, config=config),
-    )
+    # The progress logger renders a step-by-step visual of the run (→ node,
+    # ✓ done, ⏸ paused, ▸ resumed, ✖ FAILED / ✓ PUBLISHED). It is reused
+    # across the initial invoke and every resume so the timeline is continuous.
+    progress = GraphProgressLogger()
+    config = {"configurable": {"thread_id": args.feature_id}, "callbacks": [progress]}
+
+    result = graph.invoke({"aha_feature_id": args.feature_id}, config=config)
 
     # Keep resuming while the graph is paused on any interrupt (test case
     # review or low pattern-score confirmation).
     while "__interrupt__" in result:
         decision = _prompt_for_interrupt(result["__interrupt__"][0])
-        result = run_with_spinner(
-            "Resuming pipeline...",
-            lambda: graph.invoke(Command(resume=decision), config=config),
-        )
+        result = graph.invoke(Command(resume=decision), config=config)
 
     print_final_state(result)
 
