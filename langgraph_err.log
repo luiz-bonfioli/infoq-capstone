@@ -1,0 +1,30 @@
+INFO:langgraph_api.cli:
+
+        Welcome to
+
+╦  ┌─┐┌┐┌┌─┐╔═╗┬─┐┌─┐┌─┐┬ ┬
+║  ├─┤││││ ┬║ ╦├┬┘├─┤├─┘├─┤
+╩═╝┴ ┴┘└┘└─┘╚═╝┴└─┴ ┴┴  ┴ ┴
+
+- 🚀 API: [36mhttp://127.0.0.1:2024[0m
+- 🎨 Studio UI: [36mhttps://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:2024[0m
+- 📚 API Docs: [36mhttp://127.0.0.1:2024/docs[0m
+
+This in-memory server is designed for development and testing.
+For production use, please use LangSmith Deployment.
+
+
+Exception in thread Thread-1:
+Traceback (most recent call last):
+  File "C:\Users\luiz.bonfioli\AppData\Local\Programs\Python\Python313\Lib\threading.py", line 1043, in _bootstrap_inner
+    self.run()
+    ~~~~~~~~^^
+  File "C:\Users\luiz.bonfioli\AppData\Local\Programs\Python\Python313\Lib\threading.py", line 994, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Komatsu\capstone\.venv\Lib\site-packages\langgraph_runtime_inmem\_persistence.py", line 57, in _flush_loop
+    store.sync()
+    ~~~~~~~~~~^^
+  File "C:\Komatsu\capstone\.venv\Lib\site-packages\langgraph\checkpoint\memory\__init__.py", line 656, in sync
+    fileobj = open(tempname, "wb" if self.format == "pickle" else "w")
+FileNotFoundError: [Errno 2] No such file or directory: '.langgraph_api\\.langgraph_ops.pckl.tmp'

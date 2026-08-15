@@ -1,0 +1,13 @@
+langchain-core
+langgraph>=0.2.0
+langchain>=0.3.0
+langchain-openai>=0.2.0
+python-dotenv>=1.0.0
+numpy>=1.26.0
+langsmith>=0.1.0
+truststore>=0.8.0
+rich>=13.7.0
+
+# Optional: only needed to run `langgraph dev` (LangGraph Studio, local
+# visualization of the graph). Not required to run app/main.py.
+langgraph-cli[inmem]>=0.1.0
