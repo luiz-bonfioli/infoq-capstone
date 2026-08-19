@@ -7,28 +7,75 @@ See [`NODES_AND_STATE.md`](./NODES_AND_STATE.md) for every node and the `Pipelin
 
 ## Graph
 
+The graph's nodes fall into four categories:
+
+- 🧠 **Chat LLM** — `pattern_scoring`, `llm_generation` each call `gpt-4o-mini` (scoring + test-case generation).
+- 📚 **Embeddings** — `rag_retrieval` calls the `text-embedding-3-small` embeddings API.
+- 🧑 **Human-in-the-loop** — `confirm_low_score` (continue/abort) and `human_review` (approve/reject) pause via `interrupt()`.
+- 🔧 **LangChain tools (mock-backed)** — `aha_extractor` (`get_aha_feature`) and `testrail_publish` (`publish_test_cases_to_testrail`).
+
+The remaining nodes (`preprocessing`, `error_handler`) are deterministic, pure-Python — no LLM, embeddings, tool, or human interaction.
+
 ```mermaid
 flowchart TD
-    START([START]) --> aha_extractor
-    aha_extractor --> preprocessing --> pattern_scoring
-    pattern_scoring -- conformant --> llm_generation
-    pattern_scoring -- partial / divergent --> confirm_low_score
+    START([START]) --> aha_extractor["aha_extractor 🔧"]
+    aha_extractor --> preprocessing --> pattern_scoring["pattern_scoring 🧠"]
+    pattern_scoring -- conformant --> llm_generation["llm_generation 🧠"]
+    pattern_scoring -- partial / divergent --> confirm_low_score["confirm_low_score 🧑"]
     confirm_low_score -- abort --> error_handler
-    confirm_low_score -- continue, divergent --> rag_retrieval --> llm_generation
+    confirm_low_score -- continue, divergent --> rag_retrieval["rag_retrieval 📚"] --> llm_generation
     confirm_low_score -- continue, partial --> llm_generation
-    llm_generation --> human_review
-    human_review -- approved --> testrail_publish --> END([END])
+    llm_generation --> human_review["human_review 🧑"]
+    human_review -- approved --> testrail_publish["testrail_publish 🔧"] --> END([END])
     human_review -- rejected, retries left --> llm_generation
     human_review -- rejected, exhausted --> error_handler
     error_handler --> END
+
+    classDef chatllm fill:#dbeafe,stroke:#1d4ed8,stroke-width:2px,color:#1e3a8a;
+    classDef embedding fill:#dcfce7,stroke:#15803d,color:#14532d;
+    classDef human fill:#fef3c7,stroke:#b45309,color:#78350f;
+    classDef tool fill:#f3e8ff,stroke:#7e22ce,color:#581c87;
+    class pattern_scoring,llm_generation chatllm;
+    class rag_retrieval embedding;
+    class confirm_low_score,human_review human;
+    class aha_extractor,testrail_publish tool;
 ```
 
-## Tools
+**Legend**
 
-| Tool | Description | Status |
-|---|---|---|
-| [`get_aha_feature`](./app/tools/aha_tools.py) | Fetch Aha! feature (description, acceptance criteria, comments, attachments) | Mock data |
-| [`publish_test_cases_to_testrail`](./app/tools/testrail_tools.py) | Publish approved test cases as a TestRail run | Mock data |
+| Marker | Color | Nodes | Role |
+|---|---|---|---|
+| 🧠 | Blue | `pattern_scoring`, `llm_generation` | Calls the chat LLM (`gpt-4o-mini`) |
+| 📚 | Green | `rag_retrieval` | Calls the embeddings API (`text-embedding-3-small`) |
+| 🧑 | Amber | `confirm_low_score`, `human_review` | Pauses for human input via `interrupt()` |
+| 🔧 | Purple | `aha_extractor`, `testrail_publish` | Calls a LangChain tool (`get_aha_feature` / `publish_test_cases_to_testrail`), mock-backed |
+| — | Plain | `preprocessing`, `error_handler` | Deterministic, pure Python (no LLM / embeddings / tool / human) |
+
+
+## Rubric-based evaluation (LLM-as-judge) + human evaluation (HITL)
+
+A **rubric** is a set of written criteria for grading. The LLM reads the rubric + the artifact and returns a **typed verdict** (score + rationale) — that's **LLM-as-judge**. A human can then override that verdict — that's **human evaluation (HITL)**.
+
+**LLM-as-judge** — `pattern_scoring` grades the feature ticket against [`company_patterns.md`](./company_patterns.md) → `conformant` / `partial` / `divergent`. The verdict drives routing: `conformant` generates directly; `divergent` goes through RAG + human gate.
+
+**Human evaluation (HITL)** — two nodes pause via `interrupt()`:
+
+- **`confirm_low_score`** — a human vets the LLM's score (`continue` / `abort`) before generating from a weak ticket.
+- **`human_review`** — a human approves or rejects the generated test cases; a rejection regenerates (max 3 attempts), an approval publishes.
+
+**In short:** the **LLM judges the input**; **humans judge the verdict and the output**.
+
+## RAG — how it works (partially mocked, partially real)
+
+RAG only runs for `divergent` tickets (`rag_retrieval` node), to ground test case generation in company standards:
+
+1. An in-memory vector store is seeded with `COMPANY_KNOWLEDGE_SEED` (`app/knowledge_base.py`) — 5 static docs split out of `company_patterns.md` (naming, coverage, structure, prioritization, ticket completeness).
+2. The feature Markdown is embedded with **real** OpenAI embeddings (`text-embedding-3-small`) and the top-4 chunks are retrieved by similarity.
+3. `llm_generation` injects those chunks into its prompt, so `gpt-4o-mini` grounds the test cases in the same rubric the scorer used.
+
+- **What's real** — the embedding calls, the similarity search, and grounding the LLM output on retrieved context.
+- **What's mocked/limited** — the knowledge corpus is a small hardcoded seed (one file, rebuilt in memory on every run) rather than a real ingested corpus with persistence — no pgvector/Pinecone/Chroma, no ingestion pipeline yet. Swap `InMemoryVectorStore` + `COMPANY_KNOWLEDGE_SEED` for a persistent store once real knowledge sources exist (see `project.md`).
+- **Without `OPENAI_API_KEY`** — `rag_retrieval` logs a warning and returns empty context; generation then runs without RAG grounding.
 
 ## Structure
 
@@ -47,28 +94,6 @@ app/
 company_patterns.md       # Source of truth for ticket-creation standards
 requirements.txt
 ```
-
-## Scoring & routing
-
-[`company_patterns.md`](./company_patterns.md) defines what a well-formed feature ticket looks like. `pattern_scoring` judges each feature as `conformant` / `partial` / `divergent`:
-
-- **LLM scorer** (the only scorer) — requires `OPENAI_API_KEY`; without it, the run stops at `pattern_scoring` with an error.
-- `conformant` → straight to `llm_generation`.
-- `partial` / `divergent` → pause at `confirm_low_score` (human continues/aborts); on continue, `divergent` also runs RAG, `partial` skips it.
-
-The same standards are seeded into the RAG vector store (`knowledge_base.py`) so generation is grounded in the same rubric. Edit `company_patterns.md` to change what "conformant" means.
-
-## RAG — how it works (partially mocked, partially real)
-
-RAG only runs for `divergent` tickets (`rag_retrieval` node), to ground test case generation in company standards:
-
-1. An in-memory vector store is seeded with `COMPANY_KNOWLEDGE_SEED` (`app/knowledge_base.py`) — 5 static docs split out of `company_patterns.md` (naming, coverage, structure, prioritization, ticket completeness).
-2. The feature Markdown is embedded with **real** OpenAI embeddings (`text-embedding-3-small`) and the top-4 chunks are retrieved by similarity.
-3. `llm_generation` injects those chunks into its prompt, so `gpt-4o-mini` grounds the test cases in the same rubric the scorer used.
-
-**What's real:** the embedding calls, the similarity search, and grounding the LLM output on retrieved context.
-**What's mocked/limited:** the knowledge corpus is a small hardcoded seed (one file, rebuilt in memory on every run) rather than a real ingested corpus with persistence — no pgvector/Pinecone/Chroma, no ingestion pipeline yet. Swap `InMemoryVectorStore` + `COMPANY_KNOWLEDGE_SEED` for a persistent store once real knowledge sources exist (see `project.md`).
-**Without `OPENAI_API_KEY`:** `rag_retrieval` logs a warning and returns empty context — generation then runs without RAG grounding.
 
 ## Mock fixtures
 
