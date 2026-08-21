@@ -1,5 +1,7 @@
 # AI-Powered Test Case Generation from Aha! Features Using RAG
 
+> **InfoQ Certified AI Engineering capstone** — cohort: `july-2026-ai-americas-cohort` · team: **Luiz Bonfioli** (individual project)
+
 A [LangGraph](https://langchain-ai.github.io/langgraph/) pipeline that extracts Aha! features, retrieves relevant organizational knowledge (RAG), generates TestRail test cases with an LLM, routes them through human QA review, and publishes approved cases to TestRail.
 
 See [`project.md`](./project.md) for the full problem statement and architecture.
@@ -166,3 +168,19 @@ LANGSMITH_PROJECT=capstone-test-case-gen
 ```
 
 Put these in your `.env`, then run the pipeline as usual — every run shows up as a trace at smith.langchain.com.
+
+## Lessons learned
+
+Working through the **july-2026-ai-americas-cohort** taught me as much about *how to build agents* as about the pipeline itself:
+
+1. **From Copilot CLI + skills to authoring agents.** I started by using skills to write code for me; building this agent flipped me into designing the system itself — state, nodes, edges, routing — instead of having an assistant write my files.
+
+2. **Observability and traceability.** The human gates and `error_handler` make every run inspectable, and LangSmith lets me answer "what did the system see, decide, and produce?" for any run. For an LLM system, that traceability is the trust story.
+
+3. **Evals for accuracy.** Evals are the load-bearing wall, not the final chapter. The LLM-as-judge disagreed with my expected tiers on three golden fixtures; that mismatch drove real decisions (keep the 0.50 gate, fix `AHA-202`) instead of being hidden.
+
+4. **RAG techniques.** Retrieval grounds generation in company standards — but only when needed: RAG runs for `divergent` tickets and skips `conformant` ones. The techniques that mattered were *when* to retrieve (routing), *what* to retrieve (top-k over a rubric-seeded corpus), and injecting the chunks into the prompt so the LLM generates against the same standards the scorer used.
+
+5. **Agent frameworks.** LangGraph's `StateGraph`, `MemorySaver`, and `interrupt()` / `Command(resume=...)` made state routing and human-in-the-loop pause/resume straightforward — a framework that models state and control flow beats a script with callbacks.
+
+6. **Production, governance and security guardrails.** Structured output, RAG + human review against hallucination, retry caps, and env-driven config are edges of the graph, not bolt-ons.
