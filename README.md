@@ -65,6 +65,21 @@ A **rubric** is a set of written criteria for grading. The LLM reads the rubric 
 
 **In short:** the **LLM judges the input**; **humans judge the verdict and the output**.
 
+## Evals
+
+There is a deliberately small eval suite in [`eval/`](./eval/) — a **golden data set** plus one measurement, sized for the demo. See [`docs/EVALS.md`](./docs/EVALS.md) for the full picture (data set, checks, gates, current measured baseline, limitations). In short:
+
+- **`python -m eval.run_evals`** runs the real graph headlessly over the golden set (6 mock Aha! fixtures annotated with an expected tier), auto-resumes every human-gate interrupt, and scores each run on two things: **golden-tier accuracy** (does the LLM-as-judge verdict match the expected tier) and **structural quality** (are the generated test cases well-formed). A per-case table prints to the console.
+- It **exits non-zero on failure**, so it can gate a deploy in CI. The chat model comes from `OPENAI_CHAT_MODEL` (default `gpt-4o-mini`).
+- What's measured: golden-tier accuracy (currently 0.67 — the judge is stricter than design intent on a couple of thin fixtures, see `docs/EVALS.md` §5) and structural quality (currently 1.00).
+
+This sits on top of the in-loop evaluation:
+
+- **LLM-as-judge** — `pattern_scoring` grades each feature ticket against the rubric in [`company_patterns.md`](./company_patterns.md) → `conformant` / `partial` / `divergent`, and the verdict routes the graph. This judges the **input**; the eval suite judges the **output**.
+- **Human evaluation (HITL)** — `confirm_low_score` vets the LLM's score; `human_review` approves/rejects generated cases (a rejection feeds feedback into a regen, max 3 attempts).
+
+Current measured baseline (all gates PASS): every generated batch scores a perfect **1.0 structural quality**, and **golden-tier accuracy is 0.67** — with the caveat that the full-rubric LLM judge grades a couple of thin fixtures stricter than design intent (see `docs/EVALS.md` §5).
+
 ## RAG — how it works (partially mocked, partially real)
 
 RAG only runs for `divergent` tickets (`rag_retrieval` node), to ground test case generation in company standards:
@@ -113,15 +128,9 @@ python -m app.main --feature-id AHA-205   # conformant - no gate
 
 Any other ID falls back to `DEFAULT_AHA_FEATURE_MOCK` (empty, scores `divergent`). Swap the `get_mock_*` calls in `app/tools/` for real HTTP calls once API clients are implemented.
 
-## LangGraph features
+## Commands
 
-- **`StateGraph`** + **`MemorySaver`** checkpointing (swap for SQLite/Postgres for persistence).
-- **Human-in-the-loop**: `confirm_low_score` and `human_review` via `interrupt()`, resumed with `{"continue": ...}` / `{"decision": ..., "feedback": ...}`.
-- **Retry loop**: `human_review` loops back on rejection, capped at `MAX_RETRIES` (3) — **up to 3 total generation attempts**. Each `llm_generation` run increments `retry_count` (1 → 2 → 3). Rejecting after the 3rd attempt trips `retry_count >= MAX_RETRIES` and routes to `error_handler` (`NOT PUBLISHED`). Approving any of the 3 exits the loop early → `testrail_publish`.
-- **Error handling**: `safe_node` wraps every node, routing failures to `error_handler` without crashing the graph.
-- **Edge logging**: every conditional edge logs `EDGE: source -> (label) -> target` for tracing.
-
-## How to run
+### Setup
 
 ```bash
 python3 -m venv .venv
@@ -129,41 +138,26 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Set `OPENAI_API_KEY` in a `.env` file — required, since without it the run stops at `pattern_scoring`.
+Set `OPENAI_API_KEY` in a `.env` file — required.
+
+### Run the pipeline
 
 ```bash
 python -m app.main --feature-id AHA-205
 ```
 
-`--feature-id` doubles as the LangGraph `thread_id` (re-running resumes that thread). Best mock features:
-
-| Feature | Tier | Behavior |
-|---|---|---|
-| `AHA-205` | `conformant` | No gate |
-| `AHA-202` | `partial` | Pauses, answer `y`/`n` |
-| `AHA-201` | `divergent` | Pauses, RAG runs on continue |
-
-At the prompts: `y`/`n` for the score gate; approve/reject at review. Rejecting loops back to generation — up to 3 attempts total (`MAX_RETRIES`), after which the run ends `NOT PUBLISHED`.
-
-## UIs: LangGraph Studio & LangSmith
+`--feature-id` doubles as the LangGraph `thread_id` (re-running resumes that thread). Best mock features: `AHA-205` (conformant, no gate), `AHA-202` (partial, pauses), `AHA-201` (divergent, pauses + RAG on continue). At the prompts: `y`/`n` for the score gate; approve/reject at review (rejecting loops back — up to 3 attempts total, then `NOT PUBLISHED`).
 
 ### LangGraph Studio — interactive graph UI
 
-The graph is registered as `test_case_pipeline` in [`langgraph.json`](./langgraph.json). To open the interactive UI (visualize nodes/edges, start runs per thread, step through interrupts):
-
 ```bash
-pip install "langgraph-cli"     # if not already installed
+pip install "langgraph-cli"
 langgraph dev
 ```
 
-- Uses [`langgraph.json`](./langgraph.json) (assistant `test_case_pipeline`, `"env": ".env"` so your keys are loaded).
-- Open **http://127.0.0.1:2024** in your browser.
-- Pick a thread (e.g. `AHA-205`), start a run, and step through the graph. When it pauses on an interrupt, resume with `{"continue": true}` or `{"decision": "approved"}` (same payloads the CLI sends).
-- `langgraph up` starts the same UI via Docker instead of a local build — handy when you don't want a Python env; it builds from [`langgraph.json`](./langgraph.json).
+Opens **http://127.0.0.1:2024** — visualize nodes/edges, run per thread, resume interrupts with `{"continue": true}` / `{"decision": "approved"}`. `langgraph up` runs the same UI via Docker.
 
 ### LangSmith — trace / observability UI
-
-Every run (nodes, LLM calls, RAG retrieval, edges, interrupts, retries) is visualized as a **trace** at [smith.langchain.com](https://smith.langchain.com). Opt-in via env vars (already stubbed in [`.env.example`](./.env.example)):
 
 ```bash
 LANGSMITH_TRACING=true
@@ -171,10 +165,4 @@ LANGSMITH_API_KEY=lsv2_...
 LANGSMITH_PROJECT=capstone-test-case-gen
 ```
 
-Put these in your `.env` — loaded automatically by the app (CLI runs) and by `"env": ".env"` in `langgraph.json` (Studio runs) — then run the pipeline as usual:
-
-```bash
-python -m app.main --feature-id AHA-201
-```
-
-Each run shows up as a trace under `capstone-test-case-gen` on smith.langchain.com: inspect per-node input/output, token usage, and the interrupt/resume payloads. No code changes needed — LangChain/LangGraph auto-instrument when `LANGSMITH_TRACING=true` is set.
+Put these in your `.env`, then run the pipeline as usual — every run shows up as a trace at smith.langchain.com.

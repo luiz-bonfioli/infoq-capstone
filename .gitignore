@@ -23,6 +23,9 @@ ENV/
 # Logs
 *.log
 
+# Generated eval reports (keep the eval source committed, not its output)
+eval/report/
+
 # LangGraph
 .langgraph_api/
 .langgraph/

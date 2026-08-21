@@ -21,7 +21,7 @@ import logging
 from pydantic import BaseModel, Field
 
 from app.company_patterns import load_company_patterns
-from app.llm_config import build_http_client, llm_configured
+from app.llm_config import build_http_client, chat_model_name, llm_configured
 from app.nodes.utils import log_edge, safe_node
 from app.state import PatternConformance, PipelineState
 
@@ -60,7 +60,7 @@ def _llm_score(state: PipelineState) -> PatternScoreResult:
     from langchain_openai import ChatOpenAI
 
     llm = ChatOpenAI(
-        model="gpt-4o-mini", temperature=0, http_client=build_http_client()
+        model=chat_model_name(), temperature=0, http_client=build_http_client()
     ).with_structured_output(PatternScoreResult)
     prompt = _SCORING_PROMPT.format(
         company_patterns=load_company_patterns(),
@@ -86,7 +86,7 @@ def pattern_scoring(state: PipelineState) -> dict:
             "pattern_scoring requires an LLM: set OPENAI_API_KEY "
             "(the heuristic fallback scorer has been removed)."
         )
-    logger.info("pattern_scoring: using LLM scorer (gpt-4o-mini)")
+    logger.info("pattern_scoring: using LLM scorer (%s)", chat_model_name())
     result = _llm_score(state)
 
     # Always log the score before the pipeline moves on to RAG/generation,

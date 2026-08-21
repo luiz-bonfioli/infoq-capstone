@@ -15,27 +15,34 @@ from __future__ import annotations
 import logging
 
 from app.knowledge_base import COMPANY_KNOWLEDGE_SEED
-from app.llm_config import build_http_client, llm_configured
+from app.llm_config import build_http_client, embeddings_model_name, llm_configured
 from app.nodes.utils import safe_node
 from app.state import PipelineState
 
 logger = logging.getLogger(__name__)
 
-_vectorstore = None  # lazily built, module-level cache
+_vectorstores: dict[str, object] = {}  # lazily built, keyed by embeddings model
 
 
 def _get_vectorstore():
-    """Build (once) and return the in-memory vector store over seed knowledge."""
-    global _vectorstore
-    if _vectorstore is None:
-        from langchain_core.vectorstores import InMemoryVectorStore
-        from langchain_openai import OpenAIEmbeddings
+    """Build (once per embeddings model) and return the in-memory vector store."""
+    from langchain_core.vectorstores import InMemoryVectorStore
+    from langchain_openai import OpenAIEmbeddings
 
-        _vectorstore = InMemoryVectorStore.from_documents(
+    model = embeddings_model_name()
+    vectorstore = _vectorstores.get(model)
+    if vectorstore is None:
+        vectorstore = InMemoryVectorStore.from_documents(
             COMPANY_KNOWLEDGE_SEED,
-            OpenAIEmbeddings(model="text-embedding-3-small", http_client=build_http_client()),
+            OpenAIEmbeddings(model=model, http_client=build_http_client()),
         )
-    return _vectorstore
+        _vectorstores[model] = vectorstore
+    return vectorstore
+
+
+def reset_vectorstore_cache() -> None:
+    """Drop cached vector stores so an embeddings-model swap takes effect in-process."""
+    _vectorstores.clear()
 
 
 @safe_node("rag_retrieval")

@@ -19,10 +19,32 @@ from dotenv import load_dotenv
 # set externally (e.g. by the shell or a deployment platform).
 load_dotenv(override=False)
 
+# Default model names. Overridable via OPENAI_CHAT_MODEL / OPENAI_EMBEDDINGS_MODEL
+# env vars without code changes.
+DEFAULT_CHAT_MODEL = "gpt-4o-mini"
+DEFAULT_EMBEDDINGS_MODEL = "text-embedding-3-small"
+
 
 def llm_configured() -> bool:
     """Whether an OpenAI API key is available for real LLM/embeddings calls."""
     return bool(os.environ.get("OPENAI_API_KEY"))
+
+
+def chat_model_name() -> str:
+    """Chat model used by `pattern_scoring` and `llm_generation`.
+
+    Override via env `OPENAI_CHAT_MODEL`. Read at call time, so setting
+    the env var before `graph.invoke()` is sufficient - no graph rebuild needed.
+    """
+    return os.environ.get("OPENAI_CHAT_MODEL", DEFAULT_CHAT_MODEL)
+
+
+def embeddings_model_name() -> str:
+    """Embeddings model used by `rag_retrieval`.
+
+    Override via env `OPENAI_EMBEDDINGS_MODEL`.
+    """
+    return os.environ.get("OPENAI_EMBEDDINGS_MODEL", DEFAULT_EMBEDDINGS_MODEL)
 
 
 def ssl_verification_disabled() -> bool:

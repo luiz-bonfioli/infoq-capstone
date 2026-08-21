@@ -16,7 +16,7 @@ import logging
 
 from pydantic import BaseModel, Field
 
-from app.llm_config import build_http_client, llm_configured
+from app.llm_config import build_http_client, chat_model_name, llm_configured
 from app.nodes.utils import safe_node
 from app.state import PipelineState, TestCase
 
@@ -93,7 +93,7 @@ def llm_generation(state: PipelineState) -> dict:
         from langchain_openai import ChatOpenAI
 
         llm = ChatOpenAI(
-            model="gpt-4o-mini", temperature=0, http_client=build_http_client()
+            model=chat_model_name(), temperature=0, http_client=build_http_client()
         ).with_structured_output(TestCaseBatch)
         prompt = _build_prompt(state)
         batch: TestCaseBatch = llm.invoke(prompt)

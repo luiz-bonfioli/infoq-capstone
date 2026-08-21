@@ -135,12 +135,12 @@ AHA_FEATURE_MOCKS: dict[str, dict] = {
     },
     "AHA-202": {
         "id": "AHA-202",
-        "name": "Improve performance",
-        "description": "Make the reports page load faster.",
+        "name": "Reports: Load the reports page in under 2 seconds",
+        "description": "Reports with large result sets load slowly, blocking users from checking their data. Speed up the reports page so the first view renders in under 2 seconds.",
         "acceptance_criteria": [
-            "Given the reports page, when it loads, it should feel faster than before.",
+            "Given a report with 10,000 rows, when the reports page loads, the first page of results renders in under 2 seconds.",
         ],
-        "comments": ["Placeholder ticket - needs proper acceptance criteria before grooming."],
+        "comments": [],
         "attachments": [],
     },
     "AHA-203": {
