@@ -14,8 +14,7 @@ flowchart TD
     pattern_scoring -- conformant --> llm_generation
     pattern_scoring -- partial / divergent --> confirm_low_score
     confirm_low_score -- abort --> error_handler
-    confirm_low_score -- continue, divergent --> rag_retrieval --> llm_generation
-    confirm_low_score -- continue, partial --> llm_generation
+    confirm_low_score -- continue --> rag_retrieval --> llm_generation
     llm_generation --> human_review
     human_review -- approved --> testrail_publish --> END([END])
     human_review -- rejected, retries left --> llm_generation
@@ -42,7 +41,7 @@ LangGraph merges them into the running state. All fields are optional
 | `pattern_conformance` | `pattern_scoring` | `"conformant"` / `"partial"` / `"divergent"` — how well the ticket follows company patterns. |
 | `pattern_score_rationale` | `pattern_scoring` | One/two-sentence explanation of the score. |
 | `score_review_decision` | `confirm_low_score` | `"continue"` or `"abort"` — the human's answer at the score gate. |
-| `retrieved_context` | `rag_retrieval` | RAG chunks (company standards, prior test cases) used to ground generation. |
+| `retrieved_context` | `rag_retrieval` | RAG chunks — company standards + problem-domain company knowledge, each tagged with a `source_label` — used to ground generation. |
 | `generated_test_cases` | `llm_generation` | `list[TestCase]` (`title`, `preconditions`, `steps`, `expected_result`, `priority`, `tags`). |
 | `review_decision` | `human_review` | `"approved"` / `"rejected"` (initial value `"pending"`). |
 | `review_feedback` | `human_review` | Optional text fed back into regeneration on rejection. |
@@ -83,15 +82,21 @@ Human-in-the-loop gate reached when the ticket is not fully `conformant`.
 Pauses via `interrupt()` and asks the operator whether to proceed anyway.
 
 **Routing** (`route_after_score_confirmation` → `decide_rag_usage`):
-`abort` → `error_handler`; `continue` + `divergent` → `rag_retrieval`;
-`continue` + `partial` → `llm_generation` (RAG skipped for speed/cost).
+`abort` → `error_handler`; `continue` → `rag_retrieval` for every weak
+(non-conformant) ticket — `partial` or `divergent` — so RAG supplies the
+company knowledge about the ticket's problem that the weak ticket is
+missing. (A ticket that somehow scored `conformant` would skip RAG.)
 
 ### `rag_retrieval`
 `app/nodes/rag_retrieval.py` — **reads** `feature_markdown` (+ `feature_metadata`), **writes** `retrieved_context`.
 
-Retrieves the top-k chunks from an in-memory vector store seeded with
-`COMPANY_KNOWLEDGE_SEED` (`app/knowledge_base.py`). Only runs for
-`divergent` tickets.
+Retrieves the top-`TOP_K` (6) chunks from an in-memory vector store seeded
+with `COMPANY_KNOWLEDGE_SEED` (`app/knowledge_base.py`) — both the
+test-case/ticket standards and the problem-domain company knowledge. Each
+retrieved chunk is tagged with a `source_label` ("Company standard" /
+"Company knowledge"). Runs for every weak ticket (`partial` or
+`divergent`), so a ticket that is missing detail about its problem gets
+grounded in the company knowledge that addresses it.
 
 ### `llm_generation`
 `app/nodes/llm_generation.py` — **reads** `feature_markdown`, `retrieved_context`, `review_feedback`, **writes** `generated_test_cases`, `retry_count`.

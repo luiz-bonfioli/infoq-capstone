@@ -1,0 +1,3 @@
+python -m app.main --feature-id AHA-205 conformant
+python -m app.main --feature-id AHA-201 divergent
+python -m app.main --feature-id AHA-202 partial

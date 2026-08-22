@@ -41,7 +41,8 @@ _PROMPT_TEMPLATE = """You are a senior QA engineer generating TestRail test case
 Feature (Markdown):
 {feature_markdown}
 
-Relevant company standards / guidelines / prior test cases (RAG context):
+Relevant company standards and problem-domain knowledge (RAG context) -
+use this to fill in detail the feature ticket may be missing:
 {retrieved_context}
 
 {feedback_section}
@@ -53,9 +54,12 @@ company standards above for structure, naming, and prioritization.
 
 
 def _build_prompt(state: PipelineState) -> str:
-    context_text = "\n".join(
-        f"- {c['content']}" for c in state.get("retrieved_context", [])
-    ) or "(no additional context retrieved)"
+    context_lines = []
+    for c in state.get("retrieved_context", []):
+        label = c.get("source_label")
+        prefix = f"[{label}] " if label else ""
+        context_lines.append(f"- {prefix}{c['content']}")
+    context_text = "\n".join(context_lines) or "(no additional context retrieved)"
 
     feedback_section = ""
     if state.get("review_feedback"):

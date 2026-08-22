@@ -16,16 +16,12 @@ from __future__ import annotations
 import argparse
 import logging
 
-# Use the OS certificate trust store (Windows Certificate Store, etc.) for
-# all SSL verification. This fixes "CERTIFICATE_VERIFY_FAILED: unable to
-# get local issuer certificate" on corporate networks with an SSL-inspecting
-# proxy, without disabling verification like OPENAI_SKIP_SSL_VERIFY does -
-# it simply trusts the same corporate root CA your OS/browser already
-# trusts. Must run before any ssl.create_default_context() calls (i.e.
-# before importing/using requests, httpx, langsmith, etc.).
-import truststore
-
-truststore.inject_into_ssl()
+# SSL verification uses Python's default CA bundle, which covers public
+# certificates. The previous `truststore` injection (OS trust store for
+# corporate SSL-inspecting proxies) was removed because truststore requires
+# Python >= 3.10 and this project runs on 3.9. On Python 3.10+, re-add
+# `truststore>=0.8.0` to requirements.txt and call
+# `truststore.inject_into_ssl()` here, before importing httpx/requests.
 
 from dotenv import load_dotenv
 from langgraph.types import Command

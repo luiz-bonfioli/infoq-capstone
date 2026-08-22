@@ -60,9 +60,10 @@ def confirm_low_score(state: PipelineState) -> dict:
 def route_after_score_confirmation(state: PipelineState) -> str:
     """Conditional edge: route based on the human's continue/abort decision.
 
-    On "continue", defers to `decide_rag_usage` to pick `rag_retrieval` vs
-    `llm_generation` based on the original pattern score, exactly as it
-    would have for a "conformant" ticket.
+    On "continue", defers to `decide_rag_usage`, which sends every weak
+    (non-conformant) ticket - "partial" or "divergent" - through
+    `rag_retrieval` so RAG supplies the company knowledge about the
+    ticket's problem that the weak ticket is missing.
     """
     from app.nodes.pattern_scoring import decide_rag_usage
     from app.nodes.utils import log_edge

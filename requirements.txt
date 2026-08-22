@@ -5,7 +5,11 @@ langchain-openai>=0.2.0
 python-dotenv>=1.0.0
 numpy>=1.26.0
 langsmith>=0.1.0
-truststore>=0.8.0
+
+# truststore (OS trust store for SSL-inspecting corporate proxies) was
+# removed: it requires Python >= 3.10, and this project targets 3.9. The
+# default CA bundle covers public certs. On Python 3.10+, re-add
+# `truststore>=0.8.0` if you need to trust a corporate root CA.
 rich>=13.7.0
 
 # Optional: only needed to run `langgraph dev` (LangGraph Studio, local

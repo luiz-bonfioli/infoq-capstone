@@ -1,6 +1,6 @@
 """Step-by-step console visualization of the graph as it runs.
 
-A LangGraph callback handler (`GraphProgressLogger`) that renders one styled
+A LangChain callback handler (`GraphProgressLogger`) that renders one styled
 line per graph event, so the operator can see exactly where the run is in the
 pipeline - which node is executing, when it pauses for a human decision, what
 was decided, and how the run ended:
@@ -24,8 +24,10 @@ instance is reused across `graph.invoke` / `Command(resume=...)` calls so the
 timeline is continuous across interrupt pauses (see `app/main.py`).
 
 Node identity comes from the `langgraph_node` metadata that LangGraph attaches
-to each node's chain run; pause events come from `on_interrupt`/`on_resume`,
-which fire exactly at the graph's `interrupt()`/`Command(resume=...)` points.
+to each node's chain run. Pauses are detected in `on_chain_error` when the
+raised exception is a `GraphInterrupt` - it carries the `Interrupt` payload,
+so the wait reason is available right there - and resumes are detected in
+`on_chain_start` when the starting node is the one currently paused.
 
 Because a node's `on_chain_end` can be immediately followed by an interrupt,
 completion lines are deferred: the `✓` is only emitted when the *next* node
@@ -37,7 +39,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from langgraph.callbacks import GraphCallbackHandler
+from langchain_core.callbacks import BaseCallbackHandler
 from langgraph.errors import GraphInterrupt
 
 from app.console import console
@@ -50,7 +52,25 @@ _WAIT_REASONS = {
 }
 
 
-class GraphProgressLogger(GraphCallbackHandler):
+def _interrupt_value(error: GraphInterrupt) -> dict:
+    """Extract the interrupt payload dict from a `GraphInterrupt`.
+
+    A node's `interrupt(value)` surfaces in `on_chain_error` as a
+    `GraphInterrupt` whose `.args` is a nested tuple of `Interrupt` objects
+    (each carrying the payload as `.value`), e.g.
+    `error.args == ((Interrupt(value={'type': ...}, id=...),),)`. Flatten it
+    and return the first payload dict (or `{}` if none is present).
+    """
+    for arg in error.args or ():
+        items = arg if isinstance(arg, tuple) else (arg,)
+        for item in items:
+            value = getattr(item, "value", None)
+            if isinstance(value, dict):
+                return value
+    return {}
+
+
+class GraphProgressLogger(BaseCallbackHandler):
     """Render one console line per graph event (start / complete / pause / resume / end)."""
 
     def __init__(self) -> None:
@@ -105,7 +125,7 @@ class GraphProgressLogger(GraphCallbackHandler):
     def _pause_node(self, node: str) -> None:
         """Mark a node paused and print its `⏸` line (once per pause)."""
         if self._paused == node and node in self._pause_printed:
-            return  # on_chain_error(GraphInterrupt) and on_interrupt both fire
+            return  # guard against a duplicated GraphInterrupt error event
         self._pending.pop(node, None)
         self._paused = node
         if node not in self._pause_printed:
@@ -132,6 +152,16 @@ class GraphProgressLogger(GraphCallbackHandler):
                 # "▸ resumed…" was already printed for this node - don't print
                 # "→". Keep `_resumed` set: LangGraph can re-fire chain_start
                 # for the resumed node, and all duplicates must be skipped.
+                return
+            if node == self._paused:
+                # The graph was just resumed with `Command(resume=...)` and
+                # this node is re-entering from its interrupt - print "▸"
+                # instead of "→".
+                self._paused = None
+                self._resumed = node
+                self._current = node
+                self._pause_printed.discard(node)
+                self._emit(f"[cyan]▸ {node}  resumed…[/cyan]")
                 return
             if node == self._last_started:
                 # A conditional-edge router fires its own chain_start under the
@@ -195,34 +225,18 @@ class GraphProgressLogger(GraphCallbackHandler):
     ) -> None:
         node = self._node_by_run.get(run_id) or self._current
         if isinstance(error, GraphInterrupt):
-            # Mark the node paused here; the "⏸" line is printed by on_interrupt
-            # once the interrupt payload is available (it carries the wait reason).
+            # The node hit `interrupt()` and paused. The interrupt payload (an
+            # `Interrupt` value carrying the wait reason) is attached to the
+            # exception - extract it here, since the old `on_interrupt`/
+            # `on_resume` callback events no longer exist.
+            value = _interrupt_value(error)
             if node:
-                self._pending.pop(node, None)
-                self._paused = node
+                self._interrupt_value[node] = value
+                self._pause_node(node)
             return
         if node:
             self._pending.pop(node, None)
             self._emit(f"[bold red]✖ {node}[/bold red]  [red]{error}[/red]")
-
-    def on_interrupt(self, event: Any) -> None:
-        node = self._node_by_run.get(event.run_id) or self._current
-        interrupts = getattr(event, "interrupts", ())
-        if interrupts:
-            value = getattr(interrupts[0], "value", {}) or {}
-            if node:
-                self._interrupt_value[node] = value
-        if node:
-            self._pause_node(node)
-
-    def on_resume(self, event: Any) -> None:
-        if self._paused:
-            node = self._paused
-            self._paused = None
-            self._resumed = node
-            self._current = node
-            self._pause_printed.discard(node)
-            self._emit(f"[cyan]▸ {node}  resumed…[/cyan]")
 
     def _emit_terminal(self, outputs: dict[str, Any]) -> None:
         error = outputs.get("error")

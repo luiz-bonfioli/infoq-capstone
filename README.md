@@ -25,8 +25,7 @@ flowchart TD
     pattern_scoring -- conformant --> llm_generation["llm_generation 🧠"]
     pattern_scoring -- partial / divergent --> confirm_low_score["confirm_low_score 🧑"]
     confirm_low_score -- abort --> error_handler
-    confirm_low_score -- continue, divergent --> rag_retrieval["rag_retrieval 📚"] --> llm_generation
-    confirm_low_score -- continue, partial --> llm_generation
+    confirm_low_score -- continue --> rag_retrieval["rag_retrieval 📚"] --> llm_generation
     llm_generation --> human_review["human_review 🧑"]
     human_review -- approved --> testrail_publish["testrail_publish 🔧"] --> END([END])
     human_review -- rejected, retries left --> llm_generation
@@ -58,7 +57,7 @@ flowchart TD
 
 A **rubric** is a set of written criteria for grading. The LLM reads the rubric + the artifact and returns a **typed verdict** (score + rationale) — that's **LLM-as-judge**. A human can then override that verdict — that's **human evaluation (HITL)**.
 
-**LLM-as-judge** — `pattern_scoring` grades the feature ticket against [`company_patterns.md`](./company_patterns.md) → `conformant` / `partial` / `divergent`. The verdict drives routing: `conformant` generates directly; `divergent` goes through RAG + human gate.
+**LLM-as-judge** — `pattern_scoring` grades the feature ticket against [`company_patterns.md`](./company_patterns.md) → `conformant` / `partial` / `divergent`. The verdict drives routing: `conformant` generates directly; any weak ticket (`partial` / `divergent`) goes through the human gate + RAG.
 
 **Human evaluation (HITL)** — two nodes pause via `interrupt()`:
 
@@ -84,11 +83,11 @@ Current measured baseline (all gates PASS): every generated batch scores a perfe
 
 ## RAG — how it works (partially mocked, partially real)
 
-RAG only runs for `divergent` tickets (`rag_retrieval` node), to ground test case generation in company standards:
+RAG runs for every weak ticket (`partial` or `divergent` — `rag_retrieval` node) to ground test case generation in company knowledge about the ticket's problem, filling in detail the weak ticket is missing:
 
-1. An in-memory vector store is seeded with `COMPANY_KNOWLEDGE_SEED` (`app/knowledge_base.py`) — 5 static docs split out of `company_patterns.md` (naming, coverage, structure, prioritization, ticket completeness).
-2. The feature Markdown is embedded with **real** OpenAI embeddings (`text-embedding-3-small`) and the top-4 chunks are retrieved by similarity.
-3. `llm_generation` injects those chunks into its prompt, so `gpt-4o-mini` grounds the test cases in the same rubric the scorer used.
+1. An in-memory vector store is seeded with `COMPANY_KNOWLEDGE_SEED` (`app/knowledge_base.py`) — the test-case/ticket standards split out of `company_patterns.md` (naming, coverage, structure, prioritization, ticket completeness) plus problem-domain company knowledge (performance, auth/SSO, uploads, exports, notifications, RBAC, search, billing, rate limiting, audit logging, theming, password security).
+2. The feature Markdown is embedded with **real** OpenAI embeddings (`text-embedding-3-small`) and the top-6 chunks are retrieved by similarity, each tagged with a `source_label` ("Company standard" vs "Company knowledge").
+3. `llm_generation` injects those chunks into its prompt, so `gpt-4o-mini` grounds the test cases in the company standards **and** the problem-domain knowledge that addresses what the weak ticket leaves out.
 
 - **What's real** — the embedding calls, the similarity search, and grounding the LLM output on retrieved context.
 - **What's mocked/limited** — the knowledge corpus is a small hardcoded seed (one file, rebuilt in memory on every run) rather than a real ingested corpus with persistence — no pgvector/Pinecone/Chroma, no ingestion pipeline yet. Swap `InMemoryVectorStore` + `COMPANY_KNOWLEDGE_SEED` for a persistent store once real knowledge sources exist (see `project.md`).
@@ -119,7 +118,7 @@ requirements.txt
 | Feature | Score | Behavior |
 |---|---|---|
 | `AHA-201` | `divergent` | Gate triggers, RAG runs on continue |
-| `AHA-202`/`203`/`204` | `partial` | Gate triggers, RAG skipped |
+| `AHA-202`/`203`/`204` | `partial` | Gate triggers, RAG runs on continue |
 | `AHA-205`/`206` | `conformant` | No gate |
 
 ```powershell
@@ -148,7 +147,7 @@ Set `OPENAI_API_KEY` in a `.env` file — required.
 python -m app.main --feature-id AHA-205
 ```
 
-`--feature-id` doubles as the LangGraph `thread_id` (re-running resumes that thread). Best mock features: `AHA-205` (conformant, no gate), `AHA-202` (partial, pauses), `AHA-201` (divergent, pauses + RAG on continue). At the prompts: `y`/`n` for the score gate; approve/reject at review (rejecting loops back — up to 3 attempts total, then `NOT PUBLISHED`).
+`--feature-id` doubles as the LangGraph `thread_id` (re-running resumes that thread). Best mock features: `AHA-205` (conformant, no gate), `AHA-202` (partial, pauses + RAG on continue), `AHA-201` (divergent, pauses + RAG on continue). At the prompts: `y`/`n` for the score gate; approve/reject at review (rejecting loops back — up to 3 attempts total, then `NOT PUBLISHED`).
 
 ### LangGraph Studio — interactive graph UI
 
@@ -179,7 +178,7 @@ Working through the **july-2026-ai-americas-cohort** taught me as much about *ho
 
 3. **Evals for accuracy.** Evals are the load-bearing wall, not the final chapter. The LLM-as-judge disagreed with my expected tiers on three golden fixtures; that mismatch drove real decisions (keep the 0.50 gate, fix `AHA-202`) instead of being hidden.
 
-4. **RAG techniques.** Retrieval grounds generation in company standards — but only when needed: RAG runs for `divergent` tickets and skips `conformant` ones. The techniques that mattered were *when* to retrieve (routing), *what* to retrieve (top-k over a rubric-seeded corpus), and injecting the chunks into the prompt so the LLM generates against the same standards the scorer used.
+4. **RAG techniques.** Retrieval grounds generation in company knowledge — but only when needed: RAG runs for weak (`partial`/`divergent`) tickets and skips `conformant` ones. The techniques that mattered were *when* to retrieve (routing weak tickets through RAG), *what* to retrieve (top-k over a corpus of rubric standards + problem-domain knowledge), and injecting the chunks into the prompt so the LLM generates against the same standards the scorer used.
 
 5. **Agent frameworks.** LangGraph's `StateGraph`, `MemorySaver`, and `interrupt()` / `Command(resume=...)` made state routing and human-in-the-loop pause/resume straightforward — a framework that models state and control flow beats a script with callbacks.
 

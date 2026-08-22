@@ -8,10 +8,11 @@ score is logged before the pipeline proceeds, and - when the ticket is not
 whether to proceed anyway with a possibly incomplete feature ticket.
 
 The resulting `pattern_conformance` is also used by `decide_rag_usage` to
-make `rag_retrieval` optional: well-formed tickets that already conform to
-company patterns can skip the extra retrieval hop, saving latency/cost,
-while divergent/partial tickets are routed through RAG to ground
-generation with company standards.
+decide whether `rag_retrieval` runs: only fully "conformant" tickets can
+skip the retrieval hop (saving latency/cost), while any weak ticket -
+"partial" or "divergent" - is routed through RAG so the extra retrieval
+grounds generation with company knowledge about the ticket's problem,
+filling in what the weak ticket itself is missing.
 """
 
 from __future__ import annotations
@@ -126,17 +127,19 @@ def route_after_scoring(state: PipelineState) -> str:
 def decide_rag_usage(state: PipelineState) -> str:
     """Routing tool: decide whether `rag_retrieval` is needed.
 
-    Rule: RAG retrieval only runs when the ticket is "divergent" from
-    company patterns. "partial" and "conformant" tickets skip straight to
-    `llm_generation`, since they already carry enough structure/detail.
+    Rule: RAG retrieval runs for any weak (non-conformant) ticket -
+    "divergent" or "partial" - because a weak ticket is missing detail
+    about the problem it addresses, and RAG supplies the company knowledge
+    that fills that gap. Only a "conformant" ticket (which never reaches
+    this router) would skip straight to `llm_generation`.
     """
     if state.get("error"):
         log_edge("confirm_low_score", "error", "error_handler")
         return "error_handler"
 
     conformance = state.get("pattern_conformance", "divergent")
-    if conformance == "divergent":
-        log_edge("confirm_low_score", "continue+divergent", "rag_retrieval")
+    if conformance in ("divergent", "partial"):
+        log_edge("confirm_low_score", f"continue+{conformance}", "rag_retrieval")
         return "rag_retrieval"
-    log_edge("confirm_low_score", "continue+partial", "llm_generation")
+    log_edge("confirm_low_score", "continue+conformant", "llm_generation")
     return "llm_generation"

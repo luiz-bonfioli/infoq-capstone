@@ -20,8 +20,10 @@ into ready-to-publish TestRail test cases:
 2. It normalizes the raw payload into clean **Markdown**.
 3. An LLM **scores** how complete/conformant the ticket is against company
    standards (`company_patterns.md`).
-4. If the ticket deviates from those standards, it optionally retrieves
-   relevant company knowledge via **RAG** to ground the generation.
+4. If the ticket is weak — it doesn't fully conform to those standards —
+   it retrieves relevant company knowledge via **RAG** to ground the
+   generation: company standards plus problem-domain knowledge that
+   addresses the problem the weak ticket is missing detail on.
 5. An LLM **generates** structured test cases (title, steps, expected result,
    priority, tags).
 6. A **human QA reviewer** approves or rejects them (with a retry loop on
@@ -54,8 +56,7 @@ flowchart TD
     pattern_scoring -- conformant --> llm_generation
     pattern_scoring -- partial / divergent --> confirm_low_score
     confirm_low_score -- abort --> error_handler
-    confirm_low_score -- continue, divergent --> rag_retrieval --> llm_generation
-    confirm_low_score -- continue, partial --> llm_generation
+    confirm_low_score -- continue --> rag_retrieval --> llm_generation
     llm_generation --> human_review
     human_review -- approved --> testrail_publish --> END([END])
     human_review -- rejected, retries left --> llm_generation
@@ -97,7 +98,7 @@ All fields are optional (`total=False`). Here are the important ones:
 | `pattern_conformance` | `"conformant"` / `"partial"` / `"divergent"` — how well the ticket follows company patterns | `pattern_scoring` |
 | `pattern_score_rationale` | The scorer's explanation | `pattern_scoring` |
 | `score_review_decision` | `"continue"` / `"abort"` — human's answer at the score gate | `confirm_low_score` |
-| `retrieved_context` | RAG chunks grounding the generation | `rag_retrieval` |
+| `retrieved_context` | RAG chunks grounding the generation (company standards + problem-domain knowledge) | `rag_retrieval` |
 | `generated_test_cases` | The generated `TestCase`s | `llm_generation` |
 | `review_decision` | `"approved"` / `"rejected"` | `human_review` |
 | `review_feedback` | QA's comments fed back into regeneration | `human_review` |
@@ -214,8 +215,9 @@ llm_generation` — so you can follow exactly which edge was taken.
 2. `route_after_scoring` — `conformant` skips straight to generation;
    `partial`/`divergent` hits the human score gate.
 3. `route_after_score_confirmation` (+ `decide_rag_usage`) — after the human
-   gate: `abort` → `error_handler`; `continue` + `divergent` → RAG then
-   generation; `continue` + `partial` → generation without RAG.
+   gate: `abort` → `error_handler`; `continue` → RAG then generation for any
+   weak ticket (`partial` or `divergent`), so RAG supplies the company
+   knowledge about the ticket's problem that the weak ticket is missing.
 4. `route_after_review` — `approved` → publish; `rejected` + retries left → loop
    back to generation; `rejected` + retries exhausted → `error_handler`.
 
@@ -247,8 +249,8 @@ Same as above until step 4, where the score comes back `"divergent"`:
 | 5' | *edge* | `route_after_scoring` → **confirm_low_score** (score gate) |
 | 6' | **confirm_low_score** | `interrupt()` — "Ticket scored 'divergent', continue anyway?" |
 | 7' | *resume* | CLI answers `{"continue": true}` → `score_review_decision: "continue"` |
-| 8' | *edge* | `decide_rag_usage` sees `divergent` → **rag_retrieval** (a `partial` ticket would skip straight to generation) |
-| 9' | **rag_retrieval** | embeds `feature_markdown`, retrieves top-4 chunks from the company-knowledge vector store → + `retrieved_context` |
+| 8' | *edge* | `decide_rag_usage` sees a weak ticket (`divergent` — and `partial` too) → **rag_retrieval** |
+| 9' | **rag_retrieval** | embeds `feature_markdown`, retrieves top-6 chunks from the company-knowledge vector store (standards + problem-domain knowledge, each tagged with a source label) → + `retrieved_context` |
 | 10' | **llm_generation** | same as Case A, but now the prompt is *grounded* in the retrieved company standards |
 | 11' | ... | continues exactly like Case A from step 7 |
 

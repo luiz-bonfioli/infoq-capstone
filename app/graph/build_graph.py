@@ -8,8 +8,7 @@ retry-capped human review added on top:
         --(conformant)---------------------------------> llm_generation
         --(partial/divergent)--> confirm_low_score
             --(user aborts)-----------------------------> error_handler -> END
-            --(user continues, divergent)---------------> rag_retrieval -> llm_generation
-            --(user continues, partial)------------------> llm_generation
+            --(user continues)--------------------------> rag_retrieval -> llm_generation
         -> human_review --(approved)--------> testrail_publish -> END
                         --(rejected, retries left)--> llm_generation (retry loop)
                         --(rejected, retries exhausted)--> error_handler -> END
@@ -20,8 +19,10 @@ and completeness (see `app/nodes/pattern_scoring.py`), logging the score
 before the pipeline proceeds. Anything less than fully "conformant" pauses
 at `confirm_low_score` (`app/nodes/confirm_low_score.py`) so a human can
 decide whether to continue with a possibly incomplete feature ticket.
-`decide_rag_usage` is the routing "tool" that makes `rag_retrieval`
-optional based on the score.
+`decide_rag_usage` is the routing "tool" that makes `rag_retrieval` run for
+every weak (non-conformant) ticket - "partial" or "divergent" - so RAG can
+supply the company knowledge about the ticket's problem that the weak
+ticket is missing; only a "conformant" ticket skips the retrieval hop.
 
 A `MemorySaver` checkpointer is attached so that `human_review`'s and
 `confirm_low_score`'s `interrupt()` calls can actually pause and later
@@ -93,7 +94,8 @@ def build_graph():
     )
 
     # confirm_low_score: user aborts -> error_handler; user continues ->
-    # decide_rag_usage picks rag_retrieval (divergent) or llm_generation (partial).
+    # decide_rag_usage picks rag_retrieval (any weak ticket) or, defensively,
+    # llm_generation (a ticket that somehow scored "conformant").
     graph.add_conditional_edges(
         "confirm_low_score",
         route_after_score_confirmation,

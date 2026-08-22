@@ -7,7 +7,7 @@ into the running state).
 
 from __future__ import annotations
 
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, Optional, TypedDict
 
 
 class TestCase(TypedDict, total=False):
@@ -22,9 +22,10 @@ class TestCase(TypedDict, total=False):
 # How closely the preprocessed ticket already follows established company
 # patterns/standards (naming, structure, level of detail, etc.):
 #   - "divergent":  ticket deviates significantly from company patterns;
-#                   RAG retrieval is required to ground generation.
-#   - "partial":    ticket partially follows company patterns; RAG is
-#                   optional and currently skipped for speed/cost.
+#                   RAG retrieval runs to ground generation.
+#   - "partial":    ticket partially follows company patterns (weak ticket);
+#                   RAG retrieval still runs to supply the company knowledge
+#                   about the problem that the ticket is missing.
 #   - "conformant": ticket already closely matches company patterns; RAG
 #                   retrieval is skipped as unnecessary.
 PatternConformance = Literal["divergent", "partial", "conformant"]
@@ -35,8 +36,8 @@ class TestCaseResult(TypedDict, total=False):
 
     title: str
     status: Literal["created", "error"]
-    testrail_case_id: str | None
-    error: str | None
+    testrail_case_id: Optional[str]
+    error: Optional[str]
 
 
 class PipelineState(TypedDict, total=False):
@@ -56,8 +57,8 @@ class PipelineState(TypedDict, total=False):
     # "continue" | "abort" - human decision when pattern_conformance is not "conformant"
     score_review_decision: Literal["continue", "abort"]
 
-    # --- RAG Retrieval (optional, gated by pattern_conformance) ---
-    retrieved_context: list[dict[str, Any]]  # chunks from vector DB (standards, past test cases, guidelines, docs)
+    # --- RAG Retrieval (runs for weak tickets, gated by pattern_conformance) ---
+    retrieved_context: list[dict[str, Any]]  # chunks from vector DB (company standards + problem-domain knowledge); each has content, metadata, source_label
 
     # --- LLM Generation ---
     generated_test_cases: list[TestCase]
@@ -72,5 +73,5 @@ class PipelineState(TypedDict, total=False):
     published: bool
 
     # --- Control / bookkeeping ---
-    error: str | None
+    error: Optional[str]
     retry_count: int
