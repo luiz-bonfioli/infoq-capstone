@@ -4,10 +4,6 @@ Prompts a LangChain chat model with the feature Markdown + retrieved RAG
 context (when available) to produce structured, TestRail-ready test cases,
 using `.with_structured_output(...)` so the model's response is parsed
 directly into `TestCase` objects (no manual JSON parsing/repair needed).
-
-TODO: Tune the prompt/model choice, add few-shot examples from previous
-TestRail test cases, and expand schema validation (e.g. minimum step
-count) once real usage data is available.
 """
 
 from __future__ import annotations
